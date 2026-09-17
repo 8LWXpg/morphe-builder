@@ -18,6 +18,7 @@ patches-source = "anddea/revanced-patches"
 apkpure-dlurl = "https://apkpure.net/x/com.google.android.apps.youtube.music"
 apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/youtube-music"
 archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.google.android.apps.youtube.music"
+included-patches = "'Disable music video in album'"
 
 [GooglePhotos]
 enabled = false
