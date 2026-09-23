@@ -29,13 +29,11 @@ jobs:
           if [ -z "$TAG" ]; then TAG=0; fi
           echo "NEXT_VER_CODE=$((TAG + 1))" >> $GITHUB_OUTPUT
 
-      - name: Install apkeep
+      - name: Install apk-fetch
         run: |
-          curl -fsSL -o /usr/local/bin/apkeep https://github.com/EFForg/apkeep/releases/latest/download/apkeep-x86_64-unknown-linux-gnu
-          chmod +x /usr/local/bin/apkeep
-
-      - name: Install apkmirror-downloader
-        run: npm install -g apkmirror-downloader
+          curl -fsSL -o /tmp/apk-fetch.zip https://github.com/8LWXpg/apk-fetch/releases/latest/download/apk-fetch-x86_64-unknown-linux-musl.zip
+          unzip -oq /tmp/apk-fetch.zip -d /tmp/apk-fetch-dl
+          install -m 0755 /tmp/apk-fetch-dl/apk-fetch-x86_64-unknown-linux-musl/apk-fetch /usr/local/bin/apk-fetch
 
       - name: Build modules/APKs
         run: ./build.sh config.toml

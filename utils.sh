@@ -3,7 +3,6 @@
 TEMP_DIR="temp"
 BIN_DIR="bin"
 BUILD_DIR="build"
-DL_SRCS=("apkpure")
 
 if [ "${GITHUB_TOKEN-}" ]; then GH_HEADER="Authorization: token ${GITHUB_TOKEN}"; else GH_HEADER=; fi
 NEXT_VER_CODE=${NEXT_VER_CODE:-$(date +'%Y%m%d')}
@@ -347,28 +346,26 @@ merge_splits() {
 	return 0
 }
 
-# -------------------- apkpure (archive.org -> apkmirror-downloader -> apkeep/apk-pure) --------------------
-# apkpure-dlurl is used only as the source of the package id
-# (e.g. https://apkpure.net/x/com.instagram.android). archive-dlurl/apkmirror-dlurl,
-# when set, are tried first since they're more reliable for a specific pinned version;
-# apk-pure (via apkeep) is the last-resort fallback, see dl-apk.sh.
-get_apkpure_resp() {
-	__APKPURE_PKG_NAME__=$(awk -F/ '{print $NF}' <<<"$1")
+# -------------------- downloads (archive.org -> apk-fetch) --------------------
+# package-id identifies the app and is passed straight to dl-apk.sh; archive-dlurl,
+# when set, is tried first since it's more reliable for a specific pinned version.
+# apk-fetch (apkcombo -> apkpure -> apkmirror) is the fallback, see dl-apk.sh.
+get_apkfetch_resp() {
+	__APKPURE_PKG_NAME__=${args[package_id]:-${args[pkg_name]:-}}
 	__APKPURE_ARCHIVE_URL__=${args[archive_dlurl]:-}
-	__APKPURE_APKMIRROR_URL__=${args[apkmirror_dlurl]:-}
 }
-get_apkpure_pkg_name() { echo "$__APKPURE_PKG_NAME__"; }
-get_apkpure_vers() {
-	apkeep -a "$__APKPURE_PKG_NAME__" -l -d apk-pure . 2>/dev/null |
-		tail -1 | sed 's/^| *//' | tr ',' '\n' | awk '{$1=$1}1' | grep -iv "\(beta\|alpha\)"
+get_apkfetch_pkg_name() { echo "$__APKPURE_PKG_NAME__"; }
+get_apkfetch_vers() {
+	apk-fetch versions "$__APKPURE_PKG_NAME__" --all --json 2>/dev/null |
+		jq -r '.[][] | .version' | grep -iv "\(beta\|alpha\)"
 }
-dl_apkpure() {
-	local _url=$1 version=${2// /} output=$3
+dl_apkfetch() {
+	local version=${1// /} output=$2
 	if [ -f "${output}.apkm" ]; then
 		merge_splits "${output}.apkm" "$output"
 		return 0
 	fi
-	bash ./dl-apk.sh "$__APKPURE_PKG_NAME__" "$__APKPURE_APKMIRROR_URL__" "$__APKPURE_ARCHIVE_URL__" "$output" "$version" || return 1
+	bash ./dl-apk.sh "$__APKPURE_PKG_NAME__" "$__APKPURE_ARCHIVE_URL__" "$output" "$version" || return 1
 	if [ -f "${output}.apkm" ]; then merge_splits "${output}.apkm" "$output"; fi
 }
 # --------------------------------------------------
@@ -405,36 +402,20 @@ check_sig() {
 
 build_rv() {
 	eval "declare -A args=${1#*=}"
-	local version="" pkg_name=""
+	local version=""
 	local version_mode=${args[version]}
 	local app_name=${args[app_name]}
 	local app_name_l=${app_name,,}
 	app_name_l=${app_name_l// /-}
 	local table=${args[table]}
-	local dl_from=${args[dl_from]}
 
 	local p_patcher_args=()
 	if [ "${args[excluded_patches]}" ]; then p_patcher_args+=("$(join_args "${args[excluded_patches]}" -d)"); fi
 	if [ "${args[included_patches]}" ]; then p_patcher_args+=("$(join_args "${args[included_patches]}" -e)"); fi
 	[ "${args[exclusive_patches]}" = true ] && p_patcher_args+=("--exclusive")
 
-	local tried_dl=()
-	if [ "${args[pkg_name]}" ]; then
-		pkg_name="${args[pkg_name]}"
-	else
-		for dl_p in "${DL_SRCS[@]}"; do
-			if [ -z "${args[${dl_p}_dlurl]}" ]; then continue; fi
-			if ! get_${dl_p}_resp "${args[${dl_p}_dlurl]}" || ! pkg_name=$(get_"${dl_p}"_pkg_name); then
-				args[${dl_p}_dlurl]=""
-				epr "ERROR: Could not find ${table} in ${dl_p}"
-				continue
-			fi
-			tried_dl+=("$dl_p")
-			dl_from=$dl_p
-			break
-		done
-	fi
-
+	local pkg_name=${args[package_id]:-${args[pkg_name]:-}}
+	get_apkfetch_resp
 	if [ -z "$pkg_name" ]; then
 		epr "empty pkg name, not building ${table}."
 		return 0
@@ -459,7 +440,7 @@ build_rv() {
 		p_patcher_args+=("-f")
 	fi
 	if [ $get_latest_ver = "true" ]; then
-		pkgvers=$(get_"${dl_from}"_vers)
+		pkgvers=$(get_apkfetch_vers)
 		version=$(get_highest_ver <<<"$pkgvers") || version=$(head -1 <<<"$pkgvers")
 	fi
 	if [ -z "$version" ]; then
@@ -472,21 +453,11 @@ build_rv() {
 	version_f=${version_f#v}
 	local stock_apk="${TEMP_DIR}/${pkg_name}-${version_f}-arm64-v8a.apk"
 	if [ ! -f "$stock_apk" ]; then
-		for dl_p in "${DL_SRCS[@]}"; do
-			if [ -z "${args[${dl_p}_dlurl]}" ]; then continue; fi
-			pr "Downloading '${table}' from '${dl_p}'"
-			if ! isoneof $dl_p "${tried_dl[@]}"; then
-				if ! get_${dl_p}_resp "${args[${dl_p}_dlurl]}"; then
-					epr "ERROR: Could not get '${table}' from '${dl_p}'"
-					continue
-				fi
-			fi
-			if ! dl_${dl_p} "${args[${dl_p}_dlurl]}" "$version" "$stock_apk" "$get_latest_ver"; then
-				epr "ERROR: Could not download '${table}' from '${dl_p}' with version '${version}'"
-				continue
-			fi
-			break
-		done
+		pr "Downloading '${table}' via apk-fetch (${version})"
+		if ! dl_apkfetch "$version" "$stock_apk"; then
+			epr "ERROR: Could not download '${table}' with version '${version}'"
+			return 0
+		fi
 		if [ ! -f "$stock_apk" ]; then
 			epr "Stock apk not found ($stock_apk)"
 			return 0

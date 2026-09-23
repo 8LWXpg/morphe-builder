@@ -3,7 +3,7 @@
 ## All Options:
 
 There exists an example below with all defaults shown and all the keys explicitly set.  
-**All keys are optional** (except download urls) and are assigned to their default values if not set explicitly.  
+**All keys are optional** (except package-id) and are assigned to their default values if not set explicitly.  
 
 ```toml
 parallel-jobs = 1 # amount of cores to use for parallel patching, if not set $(nproc) is used
@@ -38,7 +38,6 @@ excluded-patches = """\
 included-patches = "'Some Patch'"                          # whitespace seperated list of non-default patches to include. default: ""
 exclusive-patches = false                                  # exclude all patches by default. default: false
 
-apkpure-dlurl = "https://apkpure.net/x/com.spotify.music"      # any apkpure app url works; the slug ('x' here) is ignored. supplies the package id and is the last-resort download source (via apkeep), see dl-apk.sh
+package-id = "com.spotify.music"   # package id of the app; required. downloads are tried via dl-apk.sh in this order: archive-dlurl, then apk-fetch (apkcombo -> apkpure -> apkmirror)
 archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.spotify.music" # optional, tried first
-apkmirror-dlurl = "https://www.apkmirror.com/apk/inc/app"  # optional, tried second (via apkmirror-downloader)
 ```

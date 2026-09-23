@@ -75,16 +75,14 @@ for table_name in $(toml_get_table_names); do
 	app_args[patcher_args]=$(toml_get "$t" patcher-args) || app_args[patcher_args]=""
 	app_args[table]=$table_name
 
-	if app_args[apkpure_dlurl]=$(toml_get "$t" "apkpure-dlurl"); then
-		app_args[apkpure_dlurl]=${app_args[apkpure_dlurl]%/}
-		app_args[dl_from]=apkpure
+	if app_args[package_id]=$(toml_get "$t" "package-id"); then
+		:
+	elif app_args[pkg_name]=$(toml_get "$t" "pkg-name"); then
+		:
 	else
-		abort "ERROR: no 'apkpure-dlurl' option was set for '$table_name'."
+		abort "ERROR: no 'package-id' option was set for '$table_name'."
 	fi
 	app_args[archive_dlurl]=$(toml_get "$t" "archive-dlurl") || app_args[archive_dlurl]=""
-	app_args[apkmirror_dlurl]=$(toml_get "$t" "apkmirror-dlurl") || app_args[apkmirror_dlurl]=""
-
-	app_args[pkg_name]=$(toml_get "$t" pkg-name) || app_args[pkg_name]=""
 
 	idx=$((idx + 1))
 	build_rv "$(declare -p app_args)" &

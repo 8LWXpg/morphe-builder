@@ -3,64 +3,53 @@ parallel-jobs = 8
 # add 'enabled = false' for not patching a specific app or remove it from the config
 # see https://github.com/j-hc/revanced-magisk-module/blob/main/CONFIG.md for more detailed explanations
 #
-# apkpure-dlurl (apkpure) supplies the package id; downloads are tried via dl-apk.sh in this
-# order: archive-dlurl, then apkmirror-dlurl (via apkmirror-downloader), then apk-pure
-# (apkeep) as the last resort, since apk-pure can't reliably serve a specific pinned version.
+# package-id identifies the app; downloads are tried via dl-apk.sh in this order:
+# archive-dlurl, then apk-fetch (apkcombo -> apkpure -> apkmirror).
 
 [YouTube]
 patches-source = "anddea/revanced-patches"
-apkpure-dlurl = "https://apkpure.net/x/com.google.android.youtube"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/youtube"
+package-id = "com.google.android.youtube"
 archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.google.android.youtube"
 
 [Music]
 patches-source = "anddea/revanced-patches"
-apkpure-dlurl = "https://apkpure.net/x/com.google.android.apps.youtube.music"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/youtube-music"
+package-id = "com.google.android.apps.youtube.music"
 archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.google.android.apps.youtube.music"
 included-patches = "'Disable music video in album'"
 
 [GooglePhotos]
 enabled = false
 patches-source = "RookieEnough/De-Vanced"
-apkpure-dlurl = "https://apkpure.net/x/com.google.android.apps.photos"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/google-inc/photos/"
+package-id = "com.google.android.apps.photos"
 archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.google.android.apps.photos"
 
 [Reddit]
-apkpure-dlurl = "https://apkpure.net/x/com.reddit.frontpage"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/redditinc/reddit/"
+package-id = "com.reddit.frontpage"
 archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.reddit.frontpage"
 
 [Messenger]
 enabled = false
-apkpure-dlurl = "https://apkpure.net/x/com.facebook.orca"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/facebook-2/messenger/"
+package-id = "com.facebook.orca"
 excluded-patches = "'Disable switching emoji to sticker'"
 
 [Facebook]
 enabled = false
-apkpure-dlurl = "https://apkpure.net/x/com.facebook.katana"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/facebook-2/facebook"
+package-id = "com.facebook.katana"
 
 [Twitter]
 patches-source = "crimera/piko"
-apkpure-dlurl = "https://apkpure.net/x/com.twitter.android"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/twitter-inc/twitter/"
+package-id = "com.twitter.android"
 archive-dlurl = "https://archive.org/download/jhc-apks/apks/com.twitter.android"
 
 [Instagram]
 patches-source = "crimera/piko"
-apkpure-dlurl = "https://apkpure.net/x/com.instagram.android"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/instagram/instagram-instagram/"
+package-id = "com.instagram.android"
 
 [Pixiv]
 enabled = false
-apkpure-dlurl = "https://apkpure.net/x/jp.pxv.android"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/pixiv-inc/pixiv/"
+package-id = "jp.pxv.android"
 
 [Line]
 patches-source = "andrewliang25/morphe-patches"
-apkpure-dlurl = "https://apkpure.net/x/jp.naver.line.android"
-apkmirror-dlurl = "https://www.apkmirror.com/apk/line-corporation/line/"
+package-id = "jp.naver.line.android"
 archive-dlurl = "https://archive.org/download/8LWXpg/apks/jp.naver.line.android"
