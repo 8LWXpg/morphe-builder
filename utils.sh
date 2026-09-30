@@ -110,7 +110,7 @@ _req() {
 	if [ "$op" != - ]; then
 		# parallel build_rv jobs share temp/: flock instead of a hand-rolled spin-wait
 		exec {lock}>"$op.lock" && flock "$lock" || return 1
-		if [ -f "$op" ]; then return; fi
+		if [ -s "$op" ]; then return; fi
 		dlp="$(dirname "$op")/tmp.$(basename "$op")"
 	fi
 	if ! curl -L -g -c "$TEMP_DIR/cookie.txt" -b "$TEMP_DIR/cookie.txt" --connect-timeout 10 --retry 1 --fail -s -S "$@" "$ip" -o "$dlp"; then
@@ -118,6 +118,7 @@ _req() {
 		if [ "$dlp" != - ]; then rm -f "$dlp"; fi
 		return 1
 	fi
+	if [ "$dlp" != - ] && [ ! -s "$dlp" ]; then rm -f "$dlp"; epr "Empty download: $ip"; return 1; fi
 	if [ "$dlp" != - ]; then
 		mv -f "$dlp" "$op"
 	fi
