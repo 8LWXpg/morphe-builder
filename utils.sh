@@ -70,11 +70,14 @@ get_prebuilts() {
 		v_pat='*'
 		[ "$ver" != latest ] && v_pat=${ver#v}
 		if [ "$tag" = "CLI" ]; then
-			file=$(compgen -G "$dir/*cli-${v_pat}*.jar" -G "$dir/*desktop-${v_pat}*.jar" | grep -v dev | head -1)
+			file=$(compgen -G "$dir/*cli-${v_pat}*.jar" -G "$dir/*desktop-${v_pat}*.jar" | grep -vE "dev|/tmp\.|\.lock$" | head -1)
 		else
-			file=$(compgen -G "$dir/*patches-${v_pat}.*" | grep -v dev | head -1)
+			file=$(compgen -G "$dir/*patches-${v_pat}.*" | grep -vE "dev|/tmp\.|\.lock$" | head -1)
 		fi
 		file=${file:-}
+		# a cached entry that isn't a valid zip is a truncated or HTML-error download: delete it
+		# so the [ -z "$file" ] branch below re-fetches instead of poisoning the patcher later
+		[ -n "$file" ] && ! unzip -tqq "$file" >/dev/null 2>&1 && { rm -f "$file"; file=""; }
 
 		if [ -z "$file" ]; then
 			resp=$(gh_req "$rv_rel" -) || return 1
@@ -110,7 +113,9 @@ _req() {
 	if [ "$op" != - ]; then
 		# parallel build_rv jobs share temp/: flock instead of a hand-rolled spin-wait
 		exec {lock}>"$op.lock" && flock "$lock" || return 1
-		if [ -s "$op" ]; then return; fi
+		# every cached file here is a release asset (jar/mpp), so unzip is the validity check:
+		# a truncated or HTML-error body is non-empty yet still breaks the patcher later
+		if unzip -tqq "$op" >/dev/null 2>&1; then return; fi
 		dlp="$(dirname "$op")/tmp.$(basename "$op")"
 	fi
 	if ! curl -L -g -c "$TEMP_DIR/cookie.txt" -b "$TEMP_DIR/cookie.txt" --connect-timeout 10 --retry 1 --fail -s -S "$@" "$ip" -o "$dlp"; then
@@ -118,7 +123,7 @@ _req() {
 		if [ "$dlp" != - ]; then rm -f "$dlp"; fi
 		return 1
 	fi
-	if [ "$dlp" != - ] && [ ! -s "$dlp" ]; then rm -f "$dlp"; epr "Empty download: $ip"; return 1; fi
+	if [ "$dlp" != - ] && ! unzip -tqq "$dlp" >/dev/null 2>&1; then rm -f "$dlp"; epr "Corrupt download: $ip"; return 1; fi
 	if [ "$dlp" != - ]; then
 		mv -f "$dlp" "$op"
 	fi
@@ -256,6 +261,14 @@ build_rv() {
 	# "$stock_apk.ver". its name can't be predicted, so don't consult the cache.
 	if [ "$unknown_ver" = true ]; then version_f=latest; fi
 	local stock_apk="${TEMP_DIR}/${pkg_name}-${version_f}-arm64-v8a.apk"
+	local abi=arm64-v8a
+	# a cached universal build already contains every abi, so take it over re-downloading
+	if [ ! -f "$stock_apk" ] && [ ! -f "${stock_apk}.apkm" ]; then
+		if [ -f "${TEMP_DIR}/${pkg_name}-${version_f}-all.apk" ] || [ -f "${TEMP_DIR}/${pkg_name}-${version_f}-all.apkm" ]; then
+			stock_apk="${TEMP_DIR}/${pkg_name}-${version_f}-all.apk"
+			abi=all
+		fi
+	fi
 	if [ "$unknown_ver" = true ] || { [ ! -f "$stock_apk" ] && [ ! -f "${stock_apk}.apkm" ]; }; then
 		pr "Downloading '${table}' via apk-fetch (${version_f})"
 		# archive-dlurl is tried first since it's more reliable for a pinned version; apk-fetch
@@ -315,8 +328,8 @@ build_rv() {
 	if [ "${args[patcher_args]}" ]; then p_patcher_args+=("${args[patcher_args]}"); fi
 	pr "Building '${table}'"
 
-	local patched_apk="${TEMP_DIR}/${app_name_l}-morphe-${version_f}-arm64-v8a.apk"
-	local apk_output="${BUILD_DIR}/${app_name_l}-morphe-v${version_f}-arm64-v8a.apk"
+	local patched_apk="${TEMP_DIR}/${app_name_l}-morphe-${version_f}-${abi}.apk"
+	local apk_output="${BUILD_DIR}/${app_name_l}-morphe-v${version_f}-${abi}.apk"
 	# split bundles land next to it as "${stock_apk}.apkm"; the patcher merges those itself
 	[ -f "$stock_apk" ] || stock_apk="${stock_apk}.apkm"
 	if ! patch_apk "$stock_apk" "$patched_apk" "${p_patcher_args[*]}" "${args[cli]}" "${args[ptjar]}"; then
