@@ -22,6 +22,7 @@ jobs:
 
       - name: Get next version code
         id: next_ver_code
+        if: ${{ !env.ACT }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -55,6 +56,7 @@ jobs:
           echo "${DELIM}" >> "$GITHUB_OUTPUT"
 
       - name: Upload modules to release
+        if: ${{ !env.ACT }}
         uses: svenstaro/upload-release-action@v2
         with:
           body: ${{ steps.get_output.outputs.BUILD_LOG }}
