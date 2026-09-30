@@ -14,26 +14,21 @@ fi
 
 jq --version >/dev/null || abort "\`jq\` is not installed. install it with 'apt install jq' or equivalent"
 java --version >/dev/null || abort "\`java\` is not installed. install it with 'apt install openjdk-21-jre' or equivalent"
-zip --version >/dev/null || abort "\`zip\` is not installed. install it with 'apt install zip' or equivalent"
+unzip -v >/dev/null || abort "\`unzip\` is not installed. install it with 'apt install unzip' or equivalent"
+command -v tq >/dev/null || abort "\`tq\` is not installed. run the 'Install tomlq' step in .github/workflows/build.yml"
 
-set_prebuilts
+APKSIGNER="${BIN_DIR}/apksigner.jar"
 
-vtf() { if ! isoneof "${1}" "true" "false"; then abort "ERROR: '${1}' is not a valid option for '${2}': only true or false is allowed"; fi; }
+vtf() { if [ "${1}" != true ] && [ "${1}" != false ]; then abort "ERROR: '${1}' is not a valid option for '${2}': only true or false is allowed"; fi; }
 
 # -- Main config --
 toml_prep "${1:-config.toml}" || abort "could not find config file '${1:-config.toml}'\n\tUsage: $0 <config.toml>"
 main_config_t=$(toml_get_table_main)
 PARALLEL_JOBS=$(toml_get "$main_config_t" parallel-jobs) || PARALLEL_JOBS=$(nproc)
-# PARALLEL_JOBS=1 # TODO: multiple jobs were broken by recent cli versions. and i cant bother to fix it so instead, i disable it.
 DEF_PATCHES_VER=$(toml_get "$main_config_t" patches-version) || DEF_PATCHES_VER="latest"
 DEF_CLI_VER=$(toml_get "$main_config_t" cli-version) || DEF_CLI_VER="latest"
 DEF_PATCHES_SRC=$(toml_get "$main_config_t" patches-source) || DEF_PATCHES_SRC="MorpheApp/morphe-patches"
 mkdir -p "$TEMP_DIR" "$BUILD_DIR"
-
-if [ "${2-}" = "--config-update" ]; then
-	config_update
-	exit 0
-fi
 
 : >build.md
 for file in "$TEMP_DIR"/*/changelog.md; do
@@ -75,13 +70,7 @@ for table_name in $(toml_get_table_names); do
 	app_args[patcher_args]=$(toml_get "$t" patcher-args) || app_args[patcher_args]=""
 	app_args[table]=$table_name
 
-	if app_args[package_id]=$(toml_get "$t" "package-id"); then
-		:
-	elif app_args[pkg_name]=$(toml_get "$t" "pkg-name"); then
-		:
-	else
-		abort "ERROR: no 'package-id' option was set for '$table_name'."
-	fi
+	app_args[package_id]=$(toml_get "$t" "package-id") || abort "ERROR: no 'package-id' option was set for '$table_name'."
 	app_args[archive_dlurl]=$(toml_get "$t" "archive-dlurl") || app_args[archive_dlurl]=""
 
 	idx=$((idx + 1))
@@ -94,11 +83,5 @@ if [ -z "$(ls -A1 "${BUILD_DIR}")" ]; then abort "All builds failed."; fi
 log "\nInstall [Microg](https://github.com/MorpheApp/MicroG-RE/) for YouTube and YT Music APKs"
 log "\n[revanced-magisk-module](https://github.com/j-hc/revanced-magisk-module)\n"
 log "$(cat "$TEMP_DIR"/*/changelog.md)"
-
-SKIPPED=$(cat "$TEMP_DIR"/skipped 2>/dev/null || :)
-if [ -n "$SKIPPED" ]; then
-	log "\nSkipped:"
-	log "$SKIPPED"
-fi
 
 pr "Done"

@@ -13,7 +13,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: "zulu"
-          java-version: "17"
+          java-version: "21"
 
       - name: Checkout
         uses: actions/checkout@v7
@@ -35,11 +35,16 @@ jobs:
           unzip -oq /tmp/apk-fetch.zip -d /tmp/apk-fetch-dl
           install -m 0755 /tmp/apk-fetch-dl/apk-fetch-x86_64-unknown-linux-musl/apk-fetch /usr/local/bin/apk-fetch
 
+      - name: Install tomlq
+        run: |
+          curl -fsSL -o /tmp/tq.tgz https://github.com/cryptaliagy/tomlq/releases/download/0.2.2/tomlq.amd64.tgz
+          tar -xzf /tmp/tq.tgz -C /tmp
+          install -m 0755 /tmp/tq /usr/local/bin/tq
+
       - name: Build modules/APKs
-        run: ./build.sh config.toml
+        run: bash build.sh config.toml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEXT_VER_CODE: ${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}
 
       - name: Get output
         id: get_output
