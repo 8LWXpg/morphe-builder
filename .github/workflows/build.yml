@@ -9,6 +9,9 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
+    # gh refuses to touch even a public repo without a token, so hand it one for every step
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/setup-java@v6
         with:
@@ -26,21 +29,36 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG=$(gh release list -L 1 | awk -F '\t' '{print $3}')
+          TAG=$(gh release list -L 1 --json tagName -q '.[0].tagName')
           if [ -z "$TAG" ]; then TAG=0; fi
           echo "NEXT_VER_CODE=$((TAG + 1))" >> $GITHUB_OUTPUT
 
       - name: Install apk-fetch
         run: |
-          curl -fsSL -o /tmp/apk-fetch.zip https://github.com/8LWXpg/apk-fetch/releases/latest/download/apk-fetch-x86_64-unknown-linux-musl.zip
-          unzip -oq /tmp/apk-fetch.zip -d /tmp/apk-fetch-dl
+          gh release download --repo 8LWXpg/apk-fetch --pattern 'apk-fetch-x86_64-unknown-linux-musl.zip' -D /tmp
+          unzip -oq /tmp/apk-fetch-x86_64-unknown-linux-musl.zip -d /tmp/apk-fetch-dl
           install -m 0755 /tmp/apk-fetch-dl/apk-fetch-x86_64-unknown-linux-musl/apk-fetch /usr/local/bin/apk-fetch
 
       - name: Install tomlq
         run: |
-          curl -fsSL -o /tmp/tq.tgz https://github.com/cryptaliagy/tomlq/releases/download/0.2.2/tomlq.amd64.tgz
-          tar -xzf /tmp/tq.tgz -C /tmp
+          gh release download --repo cryptaliagy/tomlq --pattern 'tomlq.amd64.tgz' -D /tmp
+          tar -xzf /tmp/tomlq.amd64.tgz -C /tmp
           install -m 0755 /tmp/tq /usr/local/bin/tq
+
+      - name: Install curl-impersonate
+        run: |
+          sudo mkdir -p /opt/curl-impersonate
+          gh release download --repo lexiforest/curl-impersonate \
+            --pattern 'curl-impersonate-*x86_64-linux-gnu.tar.gz' -O - \
+            | sudo tar -xz -C /opt/curl-impersonate
+          # apkpure/apkmirror sit behind a Cloudflare check that challenges OpenSSL and desktop
+          # Chrome (ClientHello advertises MLKEM); this mobile profile omits it and passes.
+          # apk-fetch spawns "curl" from PATH, so shadowing it needs no apk-fetch change.
+          # Profiles locate their sibling binary via $0, so exec by full path (no symlink).
+          sudo install -m 755 /dev/stdin /usr/local/bin/curl <<'EOF'
+          #!/bin/sh
+          exec /opt/curl-impersonate/curl_chrome131_android "$@"
+          EOF
 
       - name: Build modules/APKs
         run: bash build.sh config.toml

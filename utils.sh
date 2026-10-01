@@ -4,8 +4,6 @@ TEMP_DIR="temp"
 BIN_DIR="bin"
 BUILD_DIR="build"
 
-if [ "${GITHUB_TOKEN-}" ]; then GH_HEADER="Authorization: token ${GITHUB_TOKEN}"; else GH_HEADER=; fi
-
 toml_prep() {
 	[ -f "$1" ] || return 1
 	__TOML__=$(tq --output json --file "$1" .)
@@ -26,10 +24,10 @@ toml_get() {
 	else return 1; fi
 }
 
-pr() { echo -e "\033[0;32m[+] ${1}\033[0m"; }
+pr() { printf "\033[0;32m[+] %s\033[0m\n" "$1"; }
 epr() {
-	echo >&2 -e "\033[0;31m[-] ${1}\033[0m"
-	if [ "${GITHUB_REPOSITORY-}" ]; then echo >&2 -e "::error::utils.sh [-] ${1}\n"; fi
+	printf >&2 "\033[0;31m[-] %s\033[0m\n" "$1"
+	if [ "${GITHUB_REPOSITORY-}" ]; then printf >&2 "::error::utils.sh [-] %s\n" "$1"; fi
 }
 
 _clean_tmp() {
@@ -58,21 +56,30 @@ get_prebuilts() {
 		dir=${TEMP_DIR}/${dir,,}-rv
 		[ -d "$dir" ] || mkdir "$dir"
 
-		local rv_rel="https://api.github.com/repos/${src}/releases"
 		if [ "$ver" = "dev" ]; then
-			local resp
-			resp=$(gh_req "$rv_rel" -) || return 1
-			ver=$(jq -e -r '.[] | .tag_name' <<<"$resp" | get_highest_ver) || return 1
+			ver=$(gh release list --repo "$src" --json tagName --jq '.[].tagName' | get_highest_ver) || return 1
+			# an empty result would leave tag_arg empty, and gh reads that as "latest"
+			[ -n "$ver" ] || { epr "No releases found in '$src'"; return 1; }
 		fi
-		if [ "$ver" = "latest" ]; then rv_rel+="/latest"; else rv_rel+="/tags/${ver}"; fi
 
-		local file asset name url tag_name resp v_pat
+		local file name tag_arg v_pat
+		# "latest" is gh's default when the tag argument is empty
+		tag_arg=; [ "$ver" != latest ] && tag_arg=$ver
 		v_pat='*'
 		[ "$ver" != latest ] && v_pat=${ver#v}
+		# a cached name can match cli-* or desktop-*, and a repeated -G is ignored by compgen
 		if [ "$tag" = "CLI" ]; then
-			file=$(compgen -G "$dir/*cli-${v_pat}*.jar" -G "$dir/*desktop-${v_pat}*.jar" | grep -vE "dev|/tmp\.|\.lock$" | head -1)
+			file=$({ compgen -G "$dir/*cli-${v_pat}*.jar"; compgen -G "$dir/*desktop-${v_pat}*.jar"; })
 		else
-			file=$(compgen -G "$dir/*patches-${v_pat}.*" | grep -vE "dev|/tmp\.|\.lock$" | head -1)
+			file=$(compgen -G "$dir/*patches-${v_pat}.*")
+		fi
+		# "dev" must match the file name only; a dir like "somedev-rv" is a legit cache.
+		# skip the check when a dev tag was asked for, or "dev" builds could never be cached.
+		if [ "${v_pat}" = "${v_pat/dev/}" ]; then
+			file=$(grep -vE "/tmp\.|\.lock$" <<<"$file" |
+				while IFS= read -r f; do case ${f##*/} in *dev*) ;; *) echo "$f";; esac; done | head -1)
+		else
+			file=$(grep -vE "/tmp\.|\.lock$" <<<"$file" | head -1)
 		fi
 		file=${file:-}
 		# a cached entry that isn't a valid zip is a truncated or HTML-error download: delete it
@@ -80,63 +87,31 @@ get_prebuilts() {
 		[ -n "$file" ] && ! unzip -tqq "$file" >/dev/null 2>&1 && { rm -f "$file"; file=""; }
 
 		if [ -z "$file" ]; then
-			resp=$(gh_req "$rv_rel" -) || return 1
-			tag_name=$(jq -r '.tag_name' <<<"$resp") || return 1
-			asset=$(jq -c '[.assets[] | select(.name | test("[.](asc|json)$") | not)][0]' <<<"$resp")
-			[ "$asset" != null ] || {
+			local info tag_name
+			# the first asset that isn't a signature/manifest is the one we want
+			info=$(gh release view "$tag_arg" --repo "$src" --json tagName,assets \
+				--jq '[.tagName, ([.assets[] | select(.name | test("[.](asc|json)$") | not)][0].name // empty)] | @tsv') || return 1
+			IFS=$'\t' read -r tag_name name <<<"$info"
+			[ -n "$name" ] || {
 				epr "No asset was found"
 				return 1
 			}
-			url=$(jq -r .url <<<"$asset")
-			name=$(jq -r .name <<<"$asset")
 			file="${dir}/${name}"
-			gh_dl "$file" "$url" >&2 || return 1
+			# stdout carries the "patch_jar cli_jar" pair, so progress goes to stderr
+			{ pr "Getting '$file' from '$src/$tag_name'"; gh release download "$tag_arg" --repo "$src" --pattern "$name" --dir "$dir"; } >&2 || return 1
+			# gh writes straight to the target, so the validity check has to come after
+			unzip -tqq "$file" >/dev/null 2>&1 || { rm -f "$file"; epr "Corrupt download: $name"; return 1; }
 			echo "$tag: $(cut -d/ -f1 <<<"$src")/${name}  " >>"${cl_dir}/changelog.md"
 			if [ "$tag" = "Patches" ]; then
 				echo -e "[Changelog](https://github.com/${src}/releases/tag/${tag_name})\n" >>"${cl_dir}/changelog.md"
 			fi
-		else
-			name=$(basename "$file")
-			tag_name=$(cut -d'-' -f3- <<<"$name")
-			tag_name=v${tag_name%.*}
 		fi
-
 		echo -n "$file "
 	done
 	echo
 }
 
-_req() {
-	local ip="$1" op="$2"
-	shift 2
-	local dlp="$op"
-	if [ "$op" != - ]; then
-		# parallel build_rv jobs share temp/: flock instead of a hand-rolled spin-wait
-		exec {lock}>"$op.lock" && flock "$lock" || return 1
-		# every cached file here is a release asset (jar/mpp), so unzip is the validity check:
-		# a truncated or HTML-error body is non-empty yet still breaks the patcher later
-		if unzip -tqq "$op" >/dev/null 2>&1; then return; fi
-		dlp="$(dirname "$op")/tmp.$(basename "$op")"
-	fi
-	if ! curl -L -g -c "$TEMP_DIR/cookie.txt" -b "$TEMP_DIR/cookie.txt" --connect-timeout 10 --retry 1 --fail -s -S "$@" "$ip" -o "$dlp"; then
-		epr "Request failed: $ip"
-		if [ "$dlp" != - ]; then rm -f "$dlp"; fi
-		return 1
-	fi
-	if [ "$dlp" != - ] && ! unzip -tqq "$dlp" >/dev/null 2>&1; then rm -f "$dlp"; epr "Corrupt download: $ip"; return 1; fi
-	if [ "$dlp" != - ]; then
-		mv -f "$dlp" "$op"
-	fi
-}
-gh_req() { _req "$1" "$2" -H "$GH_HEADER"; }
-gh_dl() {
-	if [ ! -f "$1" ]; then
-		pr "Getting '$1' from '$2'"
-		_req "$2" "$1" -H "$GH_HEADER" -H "Accept: application/octet-stream"
-	fi
-}
-
-log() { echo -e "$1  " >>"build.md"; }
+log() { printf "%s  \n" "$1" >>"build.md"; }
 get_highest_ver() {
 	local vers
 	vers=$(tee)
@@ -170,6 +145,7 @@ get_patch_last_supported_ver() {
 	# newer cli annotates versions with ' [versionCodes: ARM64_V8A=...]'; strip it
 	op=$(sed -n '/Most common compatible versions:/,$p' <<<"$op" | sed '1d; s/ \[versionCodes:[^]]*\]//' | awk '{$1=$1}1')
 	if [ "$op" = "Any" ]; then return; fi
+	local pcount
 	pcount=$(head -1 <<<"$op") pcount=${pcount#*(} pcount=${pcount% *}
 	if [ -z "$pcount" ]; then
 		if grep -Fq "$pkg_name" <<<"$list_patches"; then
@@ -182,7 +158,7 @@ get_patch_last_supported_ver() {
 }
 
 cli() {
-	local jar=$1 sub=$2
+	local jar=$1 sub=$2 op
 	shift 2
 	if op=$(java -jar "$jar" "$sub" "$@" 2>&1); then
 		echo "$op"
@@ -203,16 +179,17 @@ patch_apk() {
 --striplibs=arm64-v8a -t '$tmp_files' $patcher_args"
 
 	pr "$cmd"
-	if eval "$cmd"; then [ -f "$patched_apk" ]; else
-		rm "$patched_apk" 2>/dev/null || :
-		return 1
-	fi
+	local ok=1
+	if eval "$cmd"; then [ -f "$patched_apk" ] || ok=; else ok=; fi
+	# clean up on every exit, not just the end of the build where _clean_tmp runs
+	rm -rf "$tmp_files" || :
+	[ "$ok" = 1 ] || { rm -f "$patched_apk" 2>/dev/null || :; return 1; }
 }
 
 check_sig() {
 	local file=$1 pkg_name=$2
 	local sig
-	if grep -q "$pkg_name" sig.txt; then
+	if grep -qF "$pkg_name" sig.txt; then
 		sig=$(java -jar "$APKSIGNER" verify --print-certs "$file" | grep ^Signer | grep SHA-256 | tail -1 | awk '{print $NF}')
 		echo "$pkg_name signature: ${sig}"
 		grep -qFx "$sig $pkg_name" sig.txt
@@ -262,14 +239,20 @@ build_rv() {
 	if [ "$unknown_ver" = true ]; then version_f=latest; fi
 	local stock_apk="${TEMP_DIR}/${pkg_name}-${version_f}-arm64-v8a.apk"
 	local abi=arm64-v8a
-	# a cached universal build already contains every abi, so take it over re-downloading
-	if [ ! -f "$stock_apk" ] && [ ! -f "${stock_apk}.apkm" ]; then
+	# a cached universal build already contains every abi, so take it over re-downloading.
+	# skipped when the version is unknown: "latest" is not a real version, so a cached
+	# latest-all.apk is by definition the wrong content and would also mislabel abi=all
+	if [ "$unknown_ver" != true ] && [ ! -f "$stock_apk" ] && [ ! -f "${stock_apk}.apkm" ]; then
 		if [ -f "${TEMP_DIR}/${pkg_name}-${version_f}-all.apk" ] || [ -f "${TEMP_DIR}/${pkg_name}-${version_f}-all.apkm" ]; then
 			stock_apk="${TEMP_DIR}/${pkg_name}-${version_f}-all.apk"
 			abi=all
 		fi
 	fi
 	if [ "$unknown_ver" = true ] || { [ ! -f "$stock_apk" ] && [ ! -f "${stock_apk}.apkm" ]; }; then
+		# version_f is the literal "latest" here, so the name can't be predicted and a
+		# leftover from a previous run would satisfy the check below even if the
+		# download never produced anything
+		rm -f "${stock_apk}" "${stock_apk}.apkm" "${stock_apk}.ver" || :
 		pr "Downloading '${table}' via apk-fetch (${version_f})"
 		# archive-dlurl is tried first since it's more reliable for a pinned version; apk-fetch
 		# (apkcombo -> apkpure -> apkmirror) is the fallback. with no version, the provider picks
@@ -314,11 +297,9 @@ build_rv() {
 			return 0
 		fi
 	fi
-	log "${table}: ${version}"
-
 	local microg_patch
 	microg_patch=$(grep "^Name: " <<<"$list_patches" | grep -i "gmscore\|microg" || :) microg_patch=${microg_patch#*: }
-	if [ -n "$microg_patch" ] && [[ ${p_patcher_args[*]} =~ $microg_patch ]]; then
+	if [ -n "$microg_patch" ] && [[ ${p_patcher_args[*]} == *"${microg_patch}"* ]]; then
 		epr "You cant include/exclude microg patch as that's done by rvmm builder automatically."
 		p_patcher_args=("${p_patcher_args[@]//-[ei] ${microg_patch}/}")
 	fi
@@ -337,6 +318,8 @@ build_rv() {
 		return 0
 	fi
 	mv -f "$patched_apk" "$apk_output"
+	# logged only after the build succeeds, so failed versions never reach the release notes
+	log "${table}: ${version}"
 	pr "Built ${table}: '${apk_output}'"
 }
 

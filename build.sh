@@ -80,8 +80,6 @@ wait
 _clean_tmp
 if [ -z "$(ls -A1 "${BUILD_DIR}")" ]; then abort "All builds failed."; fi
 
-log "\nInstall [Microg](https://github.com/MorpheApp/MicroG-RE/) for YouTube and YT Music APKs"
-log "\n[revanced-magisk-module](https://github.com/j-hc/revanced-magisk-module)\n"
 log "$(cat "$TEMP_DIR"/*/changelog.md)"
 
 pr "Done"
